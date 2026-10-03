@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "ponvqFCiNUvYiIElzqT7s"
+uri = "file://northstar-store-code.zip"
+type = "unspecified"
+title = "Northstar website source ZIP"
+description = "Complete Northstar workspace source, assets, configuration, and lockfile. Excludes installed dependencies, build output, environment files, and private agent folders."
+logical_id = "ea848029-bf2c-45a9-8475-8ea0262f0faf"
+content_hash = "sha256:ad3aaee337c9994eb4e06d4df1276cc4a69574f8b13fdbc38e1df623c738a1bd"
+size = 299253
+mtime_ms = 1791049181430
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:3f0109e8-6e8b-48f0-8399-da32de777d63/ea848029-bf2c-45a9-8475-8ea0262f0faf/e33c7ba0-9fc3-4bf4-95ac-da9a91ac50fc"
+storage_version_token = "1791049190045841"
+content_type = "application/octet-stream"
