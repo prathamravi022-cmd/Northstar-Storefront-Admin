@@ -26,6 +26,65 @@ function loadJson<T>(key: string, fallback: T): T {
 }
 function money(value: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value); }
 function cx(...values: Array<string | false | null | undefined>) { return values.filter(Boolean).join(' '); }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function isProduct(value: unknown): value is Product {
+  if (!isRecord(value)) return false;
+  const hasValidRating = value.rating === undefined || (
+    isRecord(value.rating) &&
+    typeof value.rating.rate === 'number' && Number.isFinite(value.rating.rate) &&
+    typeof value.rating.count === 'number' && Number.isSafeInteger(value.rating.count)
+  );
+  return typeof value.id === 'number' && Number.isSafeInteger(value.id) &&
+    typeof value.title === 'string' && typeof value.price === 'number' &&
+    Number.isFinite(value.price) && value.price >= 0 &&
+    typeof value.category === 'string' && typeof value.image === 'string' &&
+    typeof value.description === 'string' && hasValidRating;
+}
+function loadChanges(): LocalChanges {
+  const value = loadJson<unknown>(STORE_KEY, emptyChanges);
+  if (!isRecord(value)) return emptyChanges;
+  const edits: Record<number, Product> = {};
+  if (isRecord(value.edits)) {
+    for (const [id, product] of Object.entries(value.edits)) {
+      if (isProduct(product) && Number(id) === product.id) edits[product.id] = product;
+    }
+  }
+  return {
+    created: Array.isArray(value.created) ? value.created.filter(isProduct) : [],
+    edits,
+    deleted: Array.isArray(value.deleted)
+      ? value.deleted.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id))
+      : [],
+  };
+}
+function loadCart(): Cart {
+  const value = loadJson<unknown>(CART_KEY, {});
+  if (!isRecord(value)) return {};
+  const cart: Cart = {};
+  for (const [id, quantity] of Object.entries(value)) {
+    const productId = Number(id);
+    if (Number.isSafeInteger(productId) && typeof quantity === 'number' && Number.isSafeInteger(quantity) && quantity > 0) {
+      cart[productId] = quantity;
+    }
+  }
+  return cart;
+}
+function loadWishlist(): number[] {
+  const value = loadJson<unknown>(WISH_KEY, []);
+  return Array.isArray(value)
+    ? [...new Set(value.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id)))]
+    : [];
+}
+function persistJson(key: string, value: unknown): boolean {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function ProductImage({ product, className = '' }: { product: Product; className?: string }) {
   const [failed, setFailed] = useState(false);
@@ -43,13 +102,14 @@ function App() {
   const [location] = useLocation();
   const [baseProducts, setBaseProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [changes, setChanges] = useState<LocalChanges>(() => loadJson(STORE_KEY, emptyChanges));
+  const [changes, setChanges] = useState<LocalChanges>(loadChanges);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [toastKind, setToastKind] = useState<'success' | 'error'>('success');
-  const [cart, setCart] = useState<Cart>(() => loadJson(CART_KEY, {}));
-  const [wishlist, setWishlist] = useState<number[]>(() => loadJson(WISH_KEY, []));
+  const [cart, setCart] = useState<Cart>(loadCart);
+  const [wishlist, setWishlist] = useState<number[]>(loadWishlist);
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
 
   const catalog = useMemo(() => {
     const deleted = new Set(changes.deleted);
@@ -59,10 +119,13 @@ function App() {
   }, [baseProducts, changes]);
 
   useEffect(() => {
-    localStorage.setItem(STORE_KEY, JSON.stringify(changes));
-  }, [changes]);
-  useEffect(() => { localStorage.setItem(CART_KEY, JSON.stringify(cart)); }, [cart]);
-  useEffect(() => { localStorage.setItem(WISH_KEY, JSON.stringify(wishlist)); }, [wishlist]);
+    const writes = [
+      persistJson(STORE_KEY, changes),
+      persistJson(CART_KEY, cart),
+      persistJson(WISH_KEY, wishlist),
+    ];
+    setStorageUnavailable(writes.some(success => !success));
+  }, [changes, cart, wishlist]);
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(''), 3400);
@@ -78,8 +141,11 @@ function App() {
       ]);
       if (categoriesResult.status === 'fulfilled' && categoriesResult.value.ok) {
         try {
-          const values = await categoriesResult.value.json();
-          if (Array.isArray(values) && values.length) setCategories(values);
+          const values: unknown = await categoriesResult.value.json();
+          if (Array.isArray(values)) {
+            const validCategories = values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+            if (validCategories.length) setCategories(validCategories);
+          }
         } catch {
           // Product categories below are a useful fallback if the categories response is malformed.
         }
@@ -87,9 +153,12 @@ function App() {
       if (productsResult.status === 'rejected') throw new Error('The Northstar catalog is temporarily unavailable. Please retry in a moment; local changes remain saved on this device.');
       const productsRes = productsResult.value;
       if (!productsRes.ok) throw new Error(`The Northstar catalog is temporarily unavailable (HTTP ${productsRes.status}). Please retry in a moment; local changes remain saved on this device.`);
-      const products = await productsRes.json() as Product[];
-      setBaseProducts(Array.isArray(products) ? products : []);
-      setCategories(current => current.length ? current : [...new Set((Array.isArray(products) ? products : []).map(p => p.category))]);
+      const responseData: unknown = await productsRes.json();
+      if (!Array.isArray(responseData)) throw new Error('The Northstar catalog returned an unexpected response. Please retry in a moment.');
+      const products = responseData.filter(isProduct);
+      if (products.length !== responseData.length) throw new Error('The Northstar catalog contains invalid product data. Please retry in a moment.');
+      setBaseProducts(products);
+      setCategories(current => current.length ? current : [...new Set(products.map(p => p.category))]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong while loading the catalog.');
     } finally { setLoading(false); }
@@ -97,30 +166,30 @@ function App() {
   useEffect(() => { void loadCatalog(); }, []);
 
   const notify = (message: string, kind: 'success' | 'error' = 'success') => { setToast(message); setToastKind(kind); };
-  const saveChanges = (next: LocalChanges) => setChanges(next);
+  const saveChanges = (update: (current: LocalChanges) => LocalChanges) => setChanges(update);
   const createProduct = async (product: Omit<Product, 'id'>) => {
-    let apiStatus = '';
-    try {
-      const response = await fetch(`${API}/products`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(product), signal: AbortSignal.timeout(8_000) });
-      if (!response.ok) apiStatus = `FakeStore returned HTTP ${response.status}`;
-    } catch {
-      apiStatus = 'FakeStore could not be reached';
-    }
-    // FakeStore simulates write IDs. Use a negative local ID to avoid collisions and retain this item either way.
-    const created = { ...product, id: -Date.now() };
-    saveChanges({ ...changes, created: [created, ...changes.created] });
-    if (apiStatus) notify(`Saved locally only — ${apiStatus}.`, 'error');
-    else notify('Product added successfully!');
+    const usedIds = new Set([...catalog.map(item => item.id), ...changes.deleted]);
+    let id = -Date.now();
+    while (usedIds.has(id)) id -= 1;
+    const created = { ...product, id };
+    saveChanges(current => ({ ...current, created: [created, ...current.created] }));
+    notify('Product added and saved in this browser.');
     return created;
   };
   const editProduct = (product: Product) => {
-    const edits = { ...changes.edits, [product.id]: product };
-    const created = changes.created.map(item => item.id === product.id ? product : item);
-    saveChanges({ ...changes, edits, created });
+    saveChanges(current => ({
+      ...current,
+      edits: { ...current.edits, [product.id]: product },
+      created: current.created.map(item => item.id === product.id ? product : item),
+    }));
     notify('Product changes saved');
   };
   const deleteProduct = (id: number) => {
-    saveChanges({ ...changes, deleted: [...new Set([...changes.deleted, id])], created: changes.created.filter(p => p.id !== id) });
+    saveChanges(current => ({
+      ...current,
+      deleted: [...new Set([...current.deleted, id])],
+      created: current.created.filter(p => p.id !== id),
+    }));
     setCart(current => { const next = { ...current }; delete next[id]; return next; });
     setWishlist(current => current.filter(item => item !== id));
     notify('Product deleted');
@@ -133,6 +202,7 @@ function App() {
     {isAdmin
       ? <AdminLayout location={location} products={catalog} categories={categories} loading={loading} error={error} retry={() => void loadCatalog()} notify={notify} onCreate={createProduct} onEdit={editProduct} onDelete={deleteProduct} />
       : <Storefront products={catalog} categories={categories} loading={loading} error={error} retry={() => void loadCatalog()} cart={cart} wishlist={wishlist} addCart={addCart} setCart={setCart} toggleWish={toggleWish} />}
+    {storageUnavailable && <div role="alert" className="fixed left-1/2 top-3 z-[99] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 rounded-xl border border-[#e3c7bd] bg-[#f8eee9] px-4 py-3 text-center text-xs font-semibold text-[#80534b] shadow-lg">Browser storage is unavailable; changes may not survive after this tab closes.</div>}
     {toast && <div role="status" data-testid="status-toast" className={cx('fixed bottom-5 left-1/2 z-[100] flex -translate-x-1/2 items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-xl fade-up', toastKind === 'error' ? 'bg-[#a23f39]' : 'bg-[#193a5a]')}>
       {toastKind === 'error' ? <CircleHelp size={16} /> : <Check size={16} />}{toast}
     </div>}

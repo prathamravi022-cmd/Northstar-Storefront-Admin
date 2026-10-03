@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "fs";
+import { glob } from "node:fs/promises";
 import path from "path";
-import glob from "fast-glob";
 import chokidar from "chokidar";
 import type { FSWatcher } from "chokidar";
 import type { Plugin } from "vite";
@@ -40,10 +40,10 @@ export function mockupPreviewPlugin(): Plugin {
   }
 
   async function discoverComponents(): Promise<Array<DiscoveredComponent>> {
-    const files = await glob(`${MOCKUPS_DIR}/**/*.tsx`, {
-      cwd: root,
-      ignore: ["**/_*/**", "**/_*.tsx"],
-    });
+    const files: string[] = [];
+    for await (const file of glob(`${MOCKUPS_DIR}/**/*.tsx`, { cwd: root })) {
+      if (isPreviewTarget(path.relative(MOCKUPS_DIR, file))) files.push(file);
+    }
 
     return files.map((f) => ({
       globKey: "./" + f.slice("src/".length),
@@ -91,10 +91,10 @@ export function mockupPreviewPlugin(): Plugin {
       const components = await discoverComponents();
       const newSource = generateSource(components);
       if (newSource !== currentSource) {
-        currentSource = newSource;
         const generatedModuleAbsPath = getGeneratedModuleAbsPath();
         mkdirSync(path.dirname(generatedModuleAbsPath), { recursive: true });
-        writeFileSync(generatedModuleAbsPath, currentSource);
+        writeFileSync(generatedModuleAbsPath, newSource);
+        currentSource = newSource;
         changed = true;
       }
     } finally {
@@ -108,10 +108,6 @@ export function mockupPreviewPlugin(): Plugin {
     }
 
     return changed;
-  }
-
-  async function onFileAddedOrRemoved(): Promise<void> {
-    await refresh();
   }
 
   return {
@@ -128,6 +124,12 @@ export function mockupPreviewPlugin(): Plugin {
 
     async configureServer(viteServer) {
       await refresh();
+      const refreshSafely = () => {
+        void refresh().catch((error: unknown) => {
+          const details = error instanceof Error ? error.stack ?? error.message : String(error);
+          viteServer.config.logger.error(`[mockup-preview] Component discovery failed: ${details}`);
+        });
+      };
 
       const mockupsAbsDir = getMockupsAbsDir();
       mkdirSync(mockupsAbsDir, { recursive: true });
@@ -145,13 +147,13 @@ export function mockupPreviewPlugin(): Plugin {
           isMockupFile(file) &&
           isPreviewTarget(path.relative(mockupsAbsDir, file))
         ) {
-          void onFileAddedOrRemoved();
+          refreshSafely();
         }
       });
 
       watcher.on("unlink", (file) => {
         if (isMockupFile(file)) {
-          void onFileAddedOrRemoved();
+          refreshSafely();
         }
       });
 
@@ -162,7 +164,7 @@ export function mockupPreviewPlugin(): Plugin {
 
         res.end = ((...args: Parameters<typeof originalEnd>) => {
           if (res.statusCode === 404 && shouldAutoRescan(pathname)) {
-            void refresh();
+            refreshSafely();
           }
           return originalEnd(...args);
         }) as typeof res.end;
