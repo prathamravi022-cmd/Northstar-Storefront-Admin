@@ -1,0 +1,34 @@
+Act as an expert Full-Stack Developer. I want to extend my existing E-commerce application by adding a dedicated, professional Admin Panel. 
+
+Please generate the code to implement the Admin Dashboard with the following strict requirements:
+
+1. ADMIN ROUTING & LAYOUT:
+- Create a new route: `/admin`.
+- The Admin UI should be distinct from the storefront. Use a modern Dashboard layout with a fixed Sidebar on the left and a main content area on the right.
+- Sidebar Links: "Dashboard Overview", "Manage Products", and "Add New Product".
+- Continue using Tailwind CSS with a clean, minimal aesthetic (White cards, subtle borders, slate-900 text, and primary blue action buttons).
+
+2. ADD PRODUCT FORM (CORE FEATURE):
+- Create a comprehensive form component for adding a new product.
+- Required Form Fields: 
+  - Product Title (Text input)
+  - Price (Number input)
+  - Category (Dropdown select - fetch categories from FakeStore API)
+  - Image URL (Text input for image link)
+  - Description (Textarea)
+- Add form validation (e.g., price must be greater than 0, all fields required).
+- Show a loading spinner inside the "Save Product" button while submitting.
+
+3. STATE MANAGEMENT & API HANDLING (CRUCIAL):
+- Use the FakeStore API endpoint `POST https://fakestoreapi.com/products` to simulate adding the product.
+- IMPORTANT: Since FakeStore API does not actually update its database, you MUST update the global state (e.g., Context API, Redux, or Zustand) immediately after a successful API response. 
+- Append the newly created product to the local products array so that it instantly appears in the Admin "Manage Products" table AND the main storefront's Product Grid without requiring a page reload.
+
+4. MANAGE PRODUCTS (TABLE VIEW):
+- Create a data table in the admin panel listing all existing products (Image thumbnail, Title, Category, Price).
+- Add dummy "Edit" and "Delete" action buttons next to each product. If a user clicks delete, remove it from the local state and show a toast notification: "Product deleted".
+
+5. UI FEEDBACK:
+- Use Toast notifications for success ("Product added successfully!") and error states.
+
+Please generate the necessary components (AdminLayout, AdminSidebar, AddProductForm, ProductTable) and update the global state logic step-by-step.

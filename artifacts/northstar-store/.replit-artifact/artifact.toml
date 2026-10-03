@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Northstar Store"
+description = "An image-rich lifestyle storefront for Northstar, pairing a modern shopping experience with a separate admin area to create, edit, filter, and manage product listings. Uses FakeStore API products with local browser persistence for responsive, immediate storefront updates."
+version = "1.0.0"
+id = "artifacts/northstar-store"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19465
+
+[services.development]
+run = "pnpm --filter @workspace/northstar-store run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/northstar-store", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/northstar-store/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19465"
+BASE_PATH = "/"
